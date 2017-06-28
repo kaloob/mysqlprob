@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"strings"
 	"testing"
-	"time"
 )
 
 func handlerEchoListener(listener net.Listener) {
@@ -16,12 +14,13 @@ func handlerEchoListener(listener net.Listener) {
 
 		conn, err := listener.Accept()
 		if err != nil {
-			continue
+			break
 		}
 
 		go func(conn net.Conn) {
-			dup_conn := io.TeeReader(conn, os.Stdout)
-			io.Copy(conn, dup_conn)
+			io.Copy(conn, conn)
+			conn.Close()
+
 		}(conn)
 	}
 }
@@ -30,6 +29,9 @@ func TestProxyNoopeInterceptorFn(t *testing.T) {
 
 	source, _ := net.Listen("tcp4", ":40000")
 	outer, _ := net.Listen("tcp4", ":40001")
+	defer source.Close()
+	defer outer.Close()
+
 	go handlerEchoListener(outer)
 
 	fn := func(r io.Reader) ([]byte, error) {
@@ -43,23 +45,33 @@ func TestProxyNoopeInterceptorFn(t *testing.T) {
 
 		return bytes, err
 	}
-	handler := Initialize(source, ":40001", fn)
-	go handler.Run()
+	proxyHandler := Initialize(source, ":40001", fn)
+	go proxyHandler.Run()
 
-	conn, err := net.DialTimeout("tcp4", ":40000", 5*time.Second)
-	defer conn.Close()
+	myAddr := new(net.TCPAddr)
+	myAddr.IP = net.ParseIP("127.0.0.1")
+	myAddr.Port = 50000
+
+	destAddr := new(net.TCPAddr) // It will connects listener of proxyHandler
+	destAddr.IP = net.ParseIP("127.0.0.1")
+	destAddr.Port = 40000
+
+	conn, err := net.DialTCP("tcp4", myAddr, destAddr)
 	if err != nil {
 		t.Error(err)
 	}
 
 	fmt.Fprintln(conn, "poe")
+	conn.CloseWrite()
+
 	bytes, _, err := bufio.NewReader(conn).ReadLine()
 	if err != nil {
 		t.Error(err)
 	}
+	conn.CloseRead()
 
 	if !strings.Contains(string(bytes), "POE") {
-		t.Error("unmatch proxy")
+		t.Errorf("unmatch proxy response. except: %v but got %v ", "POE", string(bytes))
 	}
-	os.Exit(0)
+
 }

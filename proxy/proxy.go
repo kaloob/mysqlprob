@@ -25,6 +25,7 @@ func (p *Proxy) handlerConn(conn net.Conn) {
 		panic(err)
 	}
 	defer outer_conn.Close()
+	defer conn.Close()
 
 	for {
 
@@ -33,38 +34,38 @@ func (p *Proxy) handlerConn(conn net.Conn) {
 		new_bytes, err := p.interceptor(conn)
 		if err != nil {
 			log.Println(err)
-			continue
+			break
 
 		}
 		outer_conn.SetDeadline(time.Now().Add(time.Second * 1))
 		write_bytes, err := outer_conn.Write(new_bytes)
 
 		if write_bytes == 0 {
-			continue
+			break
 		}
 
 		if err != nil {
 			log.Println(err)
-			continue
+			break
 		}
 
 		_, err = io.Copy(conn, outer_conn)
 		if err != nil {
 			log.Println(err)
-			continue
+			break
 
 		}
 	}
+
 }
 
 func (p *Proxy) Run() {
-	defer p.source.Close()
 	for {
 		conn, err := p.source.Accept()
 
 		if err != nil {
-			panic(err)
-			continue
+			log.Println(err)
+			break
 		}
 
 		go p.handlerConn(conn)
